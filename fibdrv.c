@@ -6,6 +6,8 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
 
 MODULE_LICENSE("Dual MIT/GPL");
 MODULE_AUTHOR("National Cheng Kung University, Taiwan");
@@ -17,7 +19,7 @@ MODULE_VERSION("0.1");
 /* MAX_LENGTH is set to 92 because
  * ssize_t can't fit the number > 92
  */
-#define MAX_LENGTH 92
+#define MAX_LENGTH 100
 
 static dev_t fib_dev = 0;
 static struct cdev *fib_cdev;
@@ -26,21 +28,32 @@ static DEFINE_MUTEX(fib_mutex);
 
 struct BigN {
     unsigned long long lower, upper;
-} fib_number;
+};
 
+static inline void addBigN(struct BigN *output, struct BigN x, struct BigN y)
+{
+    output->upper = x.upper + y.upper;
+    if (y.lower > ~x.lower)
+        output->upper++;
+    output->lower = x.lower + y.lower;
+}
 
-static long long fib_sequence(long long k)
+static struct BigN fib_sequence(long long k)
 {
     /* FIXME: use clz/ctz and fast algorithms to speed up */
-    long long f[k + 2];
+    struct BigN f[k + 2];
 
-    f[0] = 0;
-    f[1] = 1;
+    f[0].upper = 0;
+    f[0].lower = 0;
+
+    f[1].upper = 0;
+    f[1].lower = 1;
 
     for (int i = 2; i <= k; i++) {
-        f[i] = f[i - 1] + f[i - 2];
+        addBigN(&f[i], f[i - 1], f[i - 2]);
     }
 
+    // printk("%lld , %llu , %llu", k, f[k].upper, f[k].lower);
     return f[k];
 }
 
@@ -65,7 +78,11 @@ static ssize_t fib_read(struct file *file,
                         size_t size,
                         loff_t *offset)
 {
-    return (ssize_t) fib_sequence(*offset);
+    char kbuffer[100] = {0};
+    struct BigN result = fib_sequence(*offset);
+    snprintf(kbuffer, sizeof(kbuffer), "%llu", result.lower);
+    copy_to_user(buf, kbuffer, 100);
+    return result.upper;
 }
 
 /* write operation is skipped */
